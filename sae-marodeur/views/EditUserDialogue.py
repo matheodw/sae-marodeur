@@ -1,0 +1,2 @@
+class EditUserDialog(QDialog):
+    pass
