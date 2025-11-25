@@ -1,4 +1,6 @@
-# login_view.py
+"""Vue affichant le formulaire de connexion.
+Définit les champs utilisateur/mot de passe et les signaux associés.
+"""
 from PyQt6.QtWidgets import QWidget, QPushButton, QLineEdit, QVBoxLayout
 from PyQt6.QtCore import pyqtSignal
 

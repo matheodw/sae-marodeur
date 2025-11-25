@@ -1,4 +1,6 @@
-# login_controller.py
+"""Gère la logique d'authentification utilisateur.
+Interagit avec le modèle User et la vue LoginView.
+"""
 class LoginController:
     def __init__(self):
         from nomprojet.views.login_view import LoginView

@@ -1,4 +1,6 @@
-# home_view.py
+"""Vue principale affichée après connexion.
+Contient les boutons permettant de naviguer dans les différentes sections.
+"""
 from PyQt6.QtWidgets import QWidget, QPushButton, QVBoxLayout
 from PyQt6.QtCore import pyqtSignal
 

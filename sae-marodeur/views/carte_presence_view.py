@@ -1,4 +1,6 @@
-# carte_presence_view.py
+"""Vue PyQt pour l'affichage de la carte de présence.
+Contient les widgets nécessaires pour visualiser les données en direct.
+"""
 from PyQt6.QtWidgets import QWidget
 class CartePresenceView(QWidget):
     def __init__(self):
