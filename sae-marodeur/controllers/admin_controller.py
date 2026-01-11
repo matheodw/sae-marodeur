@@ -66,14 +66,14 @@ class AdminController:
         """
         Creates a new user account with a randomized username for testing purposes.
         """
-        username = f"agent_{random.randint(100, 999)}"
+        username = f"etudiant_{random.randint(100, 999)}"
         
         try:
             success = self.db.create_user(
                 username=username,
                 password="123",
-                role="secretaire",
-                nom="Agent",
+                role="etudiant",
+                nom="etudiant",
                 prenom="Nouveau"
             )
             
