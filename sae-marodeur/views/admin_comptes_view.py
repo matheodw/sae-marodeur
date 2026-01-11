@@ -1,7 +1,3 @@
-"""
-User Account Management View for the SAE Marodeur application.
-Provides an interface for administrators to view, add, and delete user accounts.
-"""
 import sys
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 

@@ -1,10 +1,6 @@
 """
 Model representing a person (student or staff).
 Contains general information related to an individual within the system.
-
-Author: Project Team
-Creation Date: 2024
-Last Modified: 2024
 """
 
 class Personne:
