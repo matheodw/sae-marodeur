@@ -1,32 +1,63 @@
-"""Contrôleur chargé de la recherche d'étudiants.
-Fait le lien entre la vue et la logique de recherche.
 """
-import sys
+Contrôleur chargé de la recherche d'étudiants.
+Fait le lien entre la vue RechercheEtudiantView et la base de données.
+"""
+
 import os
+import sys
+
+from views.recherche_etudiant_view import RechercheEtudiantView
+
 
 class RechercheEtudiantController:
+    """
+    Contrôleur de la recherche d'étudiants.
+    """
+
     def __init__(self, user_profile):
-        # On s'assure que le chemin est correct pour les imports
-        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        from views.recherche_etudiant_view import RechercheEtudiantView
-        
+        """
+        Initialise le contrôleur et la vue associée.
+        """
         self.user_profile = user_profile
-        
-        # IMPORTANT : On passe le profil à la vue ici
         self.view = RechercheEtudiantView(profile=self.user_profile)
-        
+
         self.connect_signals()
 
     def connect_signals(self):
-        """Connecte les signaux d'action (hors navigation gérée par NavigationManager)."""
+        """
+        Connecte les signaux de la vue aux méthodes du contrôleur.
+        """
         self.view.search_signal.connect(self.handle_search)
 
     def handle_search(self, query):
-        """Logique de recherche (simulée pour le test)."""
+        """
+        Lance une recherche d'étudiants dans la base de données.
+        """
         print(f"Recherche lancée pour : {query}")
-        # Exemple de résultats fictifs
-        results = []
+
+        try:
+            from server.database import Database
+            db = Database()
+
+            raw = db.search_etudiant(query)
+            print("Résultats DB :", raw)
+
+            results = [
+                {
+                    "nom": r.get("nom", r.get("nom_complet", "Inconnu")),
+                    "salle": r.get("salle", "Non trouvé")
+                }
+                for r in (raw or [])
+            ]
+
+        except Exception as e:
+            print(f"Erreur recherche_etudiant: {e}")
+            results = []
+
         self.view.load_results(results)
 
     def show(self):
+        """
+        Affiche la vue.
+        """
         self.view.show()
