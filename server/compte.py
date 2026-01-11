@@ -1,4 +1,3 @@
-"""Script pour créer les différents types d'utilisateurs avec leurs droits."""
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -9,11 +8,10 @@ from database import Database
 def create_or_update_user(db: Database, username: str, password: str, role: str, 
                           nom: str = None, prenom: str = None):
     """
-    Crée un utilisateur s'il n'existe pas, sinon le met à jour.
+    Creates a user if one does not exist, otherwise updates the existing one.    
     """
     user_id = db.create_user(username, password, role, nom, prenom)
     
-    # Si l'utilisateur existe déjà, le mettre à jour
     if user_id is None:
         cursor = db.conn.cursor()
         cursor.execute("SELECT id FROM users WHERE username = ?", (username,))
@@ -29,7 +27,16 @@ def create_or_update_user(db: Database, username: str, password: str, role: str,
 
 def create_default_users():
     """
-    Crée ou met à jour les utilisateurs par défaut avec leurs rôles respectifs.
+    Bootstraps the application with predefined user accounts.
+
+    Registers the following default roles:
+        * **administration**: Full system access.
+        * **secretaire**: Administrative and scheduling tasks.
+        * **femme_menage**: Maintenance and facility logging.
+        * **directeur_etudes**: Academic oversight.
+
+    :return: True if the operation succeeded, False otherwise.
+    :rtype: bool
     """
     try:
         db = Database("marodeur.db")
