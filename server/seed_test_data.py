@@ -12,23 +12,32 @@ from database import Database
 def seed(db_path: str = "marodeur.db", force: bool = False, reset_ids: bool = False):
     print(f"Utilisation de la base: {db_path}")
 
-    # Si force et fichier existe, on le supprime pour repartir à zéro
+    """
+    Main function to fill the database.
+    
+    :param db_path: Path to the database file.
+    :param force: If True, deletes the old database file first.
+    :param reset_ids: If True, restarts ID counters at 1.
+    """
     if force and os.path.exists(db_path):
         print("--force: suppression de la base existante...")
         try:
             os.remove(db_path)
         except Exception as e:
             print(f"Erreur suppression fichier: {e}")
-
-    # Initialisation de l'objet Database
+  
     db = Database(db_path)
     
-    # Récupération d'une connexion active
     conn = db.get_connection()
     cur = conn.cursor()
 
     def _reset_sqlite_sequence(table_name: str, force_reset: bool = False):
-        """Reset ou ajuste la séquence AUTOINCREMENT."""
+        """
+        Resets the AUTOINCREMENT counter for a specific table.
+    
+        If force_reset is True, the counter starts back at 1.
+        Otherwise, it adjusts to the current maximum ID in the table.
+        """
         try:
             cur.execute(f"SELECT MAX(id) FROM {table_name}")
             max_id = cur.fetchone()[0]
@@ -46,13 +55,12 @@ def seed(db_path: str = "marodeur.db", force: bool = False, reset_ids: bool = Fa
             print(f"  Impossible de reset la séquence pour {table_name}: {e}")
 
     try:
-        # ===== Salles =====
         salles = [
-            ("A101", "A", "1", 30, "TP"),
-            ("A102", "A", "1", 25, "CM"),
-            ("B201", "B", "2", 40, "Amphi"),
-            ("C303", "C", "3", 20, "TD"),
-            ("D404", "D", "4", 15, "Bureau")
+            ("01", "A", "1", 30, "TP"),
+            ("04", "A", "1", 25, "CM"),
+            ("200", "B", "2", 40, "Amphi"),
+            ("14", "C", "3", 20, "TD"),
+            ("1000", "D", "4", 15, "Bureau")
         ]
 
         cur.execute("SELECT numero FROM salles")
@@ -68,7 +76,6 @@ def seed(db_path: str = "marodeur.db", force: bool = False, reset_ids: bool = Fa
 
         conn.commit()
 
-        # ===== Personnes =====
         personnes = [
             ("DeWilde", "Matheo", "etudiant", "E001", "mateo.dewilde@etu.univ-poitiers.fr"),
             ("Bouguereau", "Andre", "etudiant", "E002", "andre.bouguereau@etu.univ-poitiers.fr"),
@@ -103,7 +110,6 @@ def seed(db_path: str = "marodeur.db", force: bool = False, reset_ids: bool = Fa
 
         conn.commit()
 
-        # ===== Présences =====
         now = datetime.now()
         cur.execute(f"SELECT id FROM personnes WHERE code_up_planning IN ({','.join('?'*len(person_codes))})", person_codes)
         personne_ids = [r[0] for r in cur.fetchall()]
@@ -122,8 +128,6 @@ def seed(db_path: str = "marodeur.db", force: bool = False, reset_ids: bool = Fa
         
         conn.commit()
 
-        # ===== Utilisateurs =====
-        # Ici on utilise la méthode de la classe db qui gère déjà sa propre connexion
         users = [
             ("secretaire", "secret", "secretaire", "Secretaire", "Test"),
             ("tech", "techpass", "administration", "Technicien", "Test"),
@@ -134,15 +138,11 @@ def seed(db_path: str = "marodeur.db", force: bool = False, reset_ids: bool = Fa
             uid = db.create_user(username, password, role, nom, prenom)
             if uid: print(f"  Utilisateur créé: {username}")
 
-        # ===== Résumé =====
         print("\n=== RÉSUMÉ DU JEU DE TEST ===")
         for table in ['salles', 'personnes', 'presences', 'users']:
             cur.execute(f"SELECT COUNT(*) FROM {table}")
             print(f"{table.capitalize()}: {cur.fetchone()[0]}")
 
-    except Exception as e:
-        print(f"ERREUR CRITIQUE: {e}")
-        conn.rollback()
     finally:
         cur.close()
         conn.close()
