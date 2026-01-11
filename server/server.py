@@ -21,402 +21,232 @@ class Server:
         """
         self.host = host
         self.port = port
-        self.socket: Optional[socket.socket] = None
+        self.sock: Optional[socket.socket] = None
         self.running = False
         self.database = Database()
         # Dictionnaire pour stocker les sessions utilisateurs (socket -> user_info)
         self.sessions: Dict[socket.socket, Dict[str, Any]] = {}
-    
+        # map action -> handler method
+        self.handlers = {
+            "login": self.handle_login,
+            "logout": self.handle_logout,
+            "get_presences": self.handle_get_presences,
+            "get_presence_map": self.handle_get_presence_map,
+            "get_salles_libres": self.handle_get_salles_libres,
+            "search_etudiant": self.handle_search_etudiant,
+            "get_all_users": self.handle_get_all_users,
+            "create_user": self.handle_create_user,
+            "update_user": self.handle_update_user,
+            "delete_user": self.handle_delete_user,
+        }
+
     def start(self):
-        """Démarre le serveur et écoute les connexions."""
+        """Start listening for incoming connections."""
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.sock.bind((self.host, self.port))
+        self.sock.listen(5)
+        self.running = True
+        print(f"Server listening on {self.host}:{self.port}")
+
         try:
-            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.socket.bind((self.host, self.port))
-            self.socket.listen(5)
-            self.running = True
-            
-            print(f"Serveur démarré sur {self.host}:{self.port}")
-            
             while self.running:
-                try:
-                    client_socket, address = self.socket.accept()
-                    print(f"Nouvelle connexion depuis {address}")
-                    
-                    # Créer un thread pour gérer ce client
-                    client_thread = threading.Thread(
-                        target=self.handle_client,
-                        args=(client_socket, address),
-                        daemon=True
-                    )
-                    client_thread.start()
-                    
-                except socket.error as e:
-                    if self.running:
-                        print(f"Erreur lors de l'acceptation: {e}")
-        except Exception as e:
-            print(f"Erreur lors du démarrage du serveur: {e}")
+                client, addr = self.sock.accept()
+                t = threading.Thread(target=self.handle_client, args=(client, addr), daemon=True)
+                t.start()
         finally:
             self.stop()
-    
+
     def stop(self):
         """Arrête le serveur."""
         self.running = False
-        if self.socket:
-            self.socket.close()
-        print("Serveur arrêté")
-    
-    def handle_client(self, client_socket: socket.socket, address: tuple):
-        """
-        Gère la communication avec un client.
-        
-        Args:
-            client_socket: Socket du client
-            address: Adresse du client
-        """
+        if self.sock:
+            try:
+                self.sock.close()
+            except Exception:
+                pass
+            finally:
+                self.sock = None
+        print("Server stopped")
+
+    def recv_exact(self, client: socket.socket, n: int) -> bytes:
+        """Read exactly n bytes from client socket."""
+        buf = b""
+        while len(buf) < n:
+            chunk = client.recv(n - len(buf))
+            if not chunk:
+                break
+            buf += chunk
+        return buf
+
+    def handle_client(self, client: socket.socket, addr: tuple):
+        """Handle a single client connection."""
         try:
-            while self.running:
-                # Recevoir la longueur du message (4 bytes)
-                length_bytes = client_socket.recv(4)
-                if not length_bytes or len(length_bytes) != 4:
+            while True:
+                length_b = self.recv_exact(client, 4)
+                if len(length_b) != 4:
                     break
-                
-                message_length = int.from_bytes(length_bytes, byteorder='big')
-                
-                # Recevoir le message JSON complet
-                message_data = b""
-                while len(message_data) < message_length:
-                    chunk = client_socket.recv(message_length - len(message_data))
-                    if not chunk:
-                        break
-                    message_data += chunk
-                
-                if len(message_data) != message_length:
+
+                length = int.from_bytes(length_b, byteorder='big')
+
+                # Read the full JSON message
+                body = self.recv_exact(client, length)
+                if len(body) != length:
                     break
-                
-                # Parser le JSON
+
                 try:
-                    request = json.loads(message_data.decode('utf-8'))
-                except json.JSONDecodeError as e:
-                    self._send_response(client_socket, {
-                        "status": "error",
-                        "message": f"Erreur de parsing JSON: {e}"
-                    })
+                    req = json.loads(body.decode("utf-8"))
+                except Exception:
+                    self.send_response(client, {"status": "error", "message": "invalid json"})
                     continue
-                
-                # Traiter la requête
-                action = request.get("action")
-                data = request.get("data", {})
-                
-                # Router vers la bonne fonction
-                response = self.process_request(client_socket, action, data)
-                
-                # Envoyer la réponse
-                self._send_response(client_socket, response)
-                
+
+                action = req.get("action")
+                data = req.get("data", {})
+                resp = self.process_request(client, action, data)
+                self.send_response(client, resp)
         except Exception as e:
-            print(f"Erreur avec le client {address}: {e}")
+            print(f"client error {addr}: {e}")
         finally:
-            # Nettoyer la session
-            if client_socket in self.sessions:
-                del self.sessions[client_socket]
-            client_socket.close()
-            print(f"Connexion fermée avec {address}")
-    
-    def _send_response(self, client_socket: socket.socket, response: Dict[str, Any]):
-        """
-        Envoie une réponse au client.
-        
-        Args:
-            client_socket: Socket du client
-            response: Dictionnaire de réponse à envoyer
-        """
+            if client in self.sessions:
+                del self.sessions[client]
+            client.close()
+
+    def send_response(self, client: socket.socket, resp: Dict[str, Any]):
+        """Send a JSON response prefixed with length."""
         try:
-            message = json.dumps(response).encode('utf-8')
-            message_length = len(message).to_bytes(4, byteorder='big')
-            client_socket.sendall(message_length + message)
+            b = json.dumps(resp).encode("utf-8")
+            client.sendall(len(b).to_bytes(4, "big") + b)
         except Exception as e:
-            print(f"Erreur lors de l'envoi de la réponse: {e}")
-    
-    def process_request(self, client_socket: socket.socket, action: str, data: Dict[str, Any]) -> Dict[str, Any]:
+            print(f"send error: {e}")
+
+    def process_request(self, client: socket.socket, action: str, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Route the action to the corresponding handler."""
+        if not action:
+            return {"status": "error", "message": "no action"}
+        handler = self.handlers.get(action)
+        if not handler:
+            return {"status": "error", "message": f"unknown action {action}"}
+        try:
+            return handler(client, data)
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    def is_authenticated(self, client: socket.socket) -> bool:
+        """Return True if client has an authenticated session."""
+        return client in self.sessions
+
+    def get_user_session(self, client: socket.socket) -> Optional[Dict[str, Any]]:
+        """Return the stored session for client or None."""
+        return self.sessions.get(client)
+
+    # Handlers
+    def handle_login(self, client: socket.socket, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Authenticate a user and create a session.
+
+        :param data: expects 'username' and 'password'
+        :return: dict response
         """
-        Traite une requête et retourne la réponse.
-        
-        Args:
-            client_socket: Socket du client
-            action: Action demandée
-            data: Données de la requête
-            
-        Returns:
-            Dictionnaire de réponse
-        """
-        # Router selon l'action
-        if action == "login":
-            return self.handle_login(client_socket, data)
-        elif action == "logout":
-            return self.handle_logout(client_socket, data)
-        elif action == "get_presences":
-            return self.handle_get_presences(client_socket, data)
-        elif action == "get_presence_map":
-            return self.handle_get_presence_map(client_socket, data)
-        elif action == "get_salles_libres":
-            return self.handle_get_salles_libres(client_socket, data)
-        elif action == "get_salles_libres_map":
-            return self.handle_get_salles_libres_map(client_socket, data)
-        elif action == "search_etudiant":
-            return self.handle_search_etudiant(client_socket, data)
-        elif action == "get_etudiant_location":
-            return self.handle_get_etudiant_location(client_socket, data)
-        elif action == "get_all_users":
-            return self.handle_get_all_users(client_socket, data)
-        elif action == "create_user":
-            return self.handle_create_user(client_socket, data)
-        elif action == "update_user":
-            return self.handle_update_user(client_socket, data)
-        elif action == "delete_user":
-            return self.handle_delete_user(client_socket, data)
-        else:
-            return {
-                "status": "error",
-                "message": f"Action inconnue: {action}"
-            }
-    
-    def is_authenticated(self, client_socket: socket.socket) -> bool:
-        """Vérifie si le client est authentifié."""
-        return client_socket in self.sessions
-    
-    def get_user_session(self, client_socket: socket.socket) -> Optional[Dict[str, Any]]:
-        """Récupère la session utilisateur."""
-        return self.sessions.get(client_socket)
-    
-    # ========== HANDLERS POUR CHAQUE ACTION ==========
-    
-    def handle_login(self, client_socket: socket.socket, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Gère l'authentification d'un utilisateur."""
         username = data.get("username")
         password = data.get("password")
-        
         if not username or not password:
-            return {
-                "status": "error",
-                "message": "Username et password requis"
-            }
-        
-        # Vérifier les identifiants dans la base de données
+            return {"status": "error", "message": "username and password required"}
         user = self.database.authenticate_user(username, password)
-        
-        if user:
-            # Créer une session
-            self.sessions[client_socket] = {
-                "user_id": user.get("id"),
-                "username": user.get("username"),
-                "role": user.get("role")
-            }
-            return {
-                "status": "success",
-                "user": {
-                    "id": user.get("id"),
-                    "username": user.get("username"),
-                    "role": user.get("role"),
-                    "nom": user.get("nom"),
-                    "prenom": user.get("prenom")
-                }
-            }
-        else:
-            return {
-                "status": "error",
-                "message": "Identifiants invalides"
-            }
-    
-    def handle_logout(self, client_socket: socket.socket, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Gère la déconnexion d'un utilisateur."""
-        if client_socket in self.sessions:
-            del self.sessions[client_socket]
-        return {"status": "success", "message": "Déconnexion réussie"}
-    
-    def handle_get_presences(self, client_socket: socket.socket, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Récupère la liste des présences."""
-        if not self.is_authenticated(client_socket):
-            return {"status": "error", "message": "Authentification requise"}
-        
-        presences = self.database.get_presences()
-        return {
-            "status": "success",
-            "data": presences
-        }
-    
-    def handle_get_presence_map(self, client_socket: socket.socket, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Récupère la carte des présences pour affichage."""
-        if not self.is_authenticated(client_socket):
-            return {"status": "error", "message": "Authentification requise"}
-        
-        presence_map = self.database.get_presence_map()
-        return {
-            "status": "success",
-            "data": presence_map
-        }
-    
-    def handle_get_salles_libres(self, client_socket: socket.socket, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Récupère la liste des salles libres."""
-        if not self.is_authenticated(client_socket):
-            return {"status": "error", "message": "Authentification requise"}
-        
-        salles = self.database.get_salles_libres()
-        return {
-            "status": "success",
-            "data": salles
-        }
-    
-    def handle_get_salles_libres_map(self, client_socket: socket.socket, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Récupère la carte des salles libres pour affichage."""
-        if not self.is_authenticated(client_socket):
-            return {"status": "error", "message": "Authentification requise"}
-        
-        salles_map = self.database.get_salles_libres_map()
-        return {
-            "status": "success",
-            "data": salles_map
-        }
-    
-    def handle_search_etudiant(self, client_socket: socket.socket, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Recherche un étudiant."""
-        if not self.is_authenticated(client_socket):
-            return {"status": "error", "message": "Authentification requise"}
-        
-        query = data.get("query", "")
+        if not user:
+            return {"status": "error", "message": "invalid credentials"}
+        self.sessions[client] = {"user_id": user["id"], "username": user["username"], "role": user.get("role")}
+        return {"status": "success", "user": user}
+
+    def handle_logout(self, client: socket.socket, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Remove the client's session."""
+        if client in self.sessions:
+            del self.sessions[client]
+        return {"status": "success"}
+
+    def handle_get_presences(self, client: socket.socket, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Return current presences (requires auth)."""
+        if not self.is_authenticated(client):
+            return {"status": "error", "message": "authentication required"}
+        return {"status": "success", "data": self.database.get_presences()}
+
+    def handle_get_presence_map(self, client: socket.socket, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Return presence map (requires auth)."""
+        if not self.is_authenticated(client):
+            return {"status": "error", "message": "authentication required"}
+        return {"status": "success", "data": self.database.get_presence_map()}
+
+    def handle_get_salles_libres(self, client: socket.socket, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Return free rooms (requires auth)."""
+        if not self.is_authenticated(client):
+            return {"status": "error", "message": "authentication required"}
+        return {"status": "success", "data": self.database.get_salles_libres()}
+
+    def handle_search_etudiant(self, client: socket.socket, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Search students (requires auth)."""
+        if not self.is_authenticated(client):
+            return {"status": "error", "message": "authentication required"}
+        query = data.get("query")
         if not query:
-            return {"status": "error", "message": "Query requise"}
-        
-        results = self.database.search_etudiant(query)
-        return {
-            "status": "success",
-            "data": results
-        }
-    
-    def handle_get_etudiant_location(self, client_socket: socket.socket, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Récupère la localisation d'un étudiant."""
-        if not self.is_authenticated(client_socket):
-            return {"status": "error", "message": "Authentification requise"}
-        
-        etudiant_id = data.get("etudiant_id")
-        if not etudiant_id:
-            return {"status": "error", "message": "etudiant_id requis"}
-        
-        location = self.database.get_etudiant_location(etudiant_id)
-        return {
-            "status": "success",
-            "data": location
-        }
-    
-    def handle_get_all_users(self, client_socket: socket.socket, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Récupère tous les utilisateurs (admin uniquement)."""
-        if not self.is_authenticated(client_socket):
-            return {"status": "error", "message": "Authentification requise"}
-        
-        session = self.get_user_session(client_socket)
+            return {"status": "error", "message": "query required"}
+        return {"status": "success", "data": self.database.search_etudiant(query)}
+
+    def handle_get_all_users(self, client: socket.socket, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Return all users (admin only)."""
+        if not self.is_authenticated(client):
+            return {"status": "error", "message": "authentication required"}
+        session = self.get_user_session(client)
         if session.get("role") != "administration":
-            return {"status": "error", "message": "Permissions insuffisantes"}
-        
-        users = self.database.get_all_users()
-        return {
-            "status": "success",
-            "data": users
-        }
-    
-    def handle_create_user(self, client_socket: socket.socket, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Crée un utilisateur (admin uniquement)."""
-        if not self.is_authenticated(client_socket):
-            return {"status": "error", "message": "Authentification requise"}
-        
-        session = self.get_user_session(client_socket)
+            return {"status": "error", "message": "permission denied"}
+        return {"status": "success", "data": self.database.get_all_users()}
+
+    def handle_create_user(self, client: socket.socket, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a user (admin only)."""
+        if not self.is_authenticated(client):
+            return {"status": "error", "message": "authentication required"}
+        session = self.get_user_session(client)
         if session.get("role") != "administration":
-            return {"status": "error", "message": "Permissions insuffisantes"}
-        
+            return {"status": "error", "message": "permission denied"}
         username = data.get("username")
         password = data.get("password")
         role = data.get("role")
-        
         if not username or not password or not role:
-            return {"status": "error", "message": "username, password et role requis"}
-        
-        user_id = self.database.create_user(
-            username=username,
-            password=password,
-            role=role,
-            nom=data.get("nom"),
-            prenom=data.get("prenom")
-        )
-        
-        if user_id:
-            return {
-                "status": "success",
-                "message": "Utilisateur créé avec succès",
-                "data": {"user_id": user_id}
-            }
-        else:
-            return {
-                "status": "error",
-                "message": "Erreur lors de la création de l'utilisateur"
-            }
-    
-    def handle_update_user(self, client_socket: socket.socket, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Modifie un utilisateur (admin uniquement)."""
-        if not self.is_authenticated(client_socket):
-            return {"status": "error", "message": "Authentification requise"}
-        
-        session = self.get_user_session(client_socket)
+            return {"status": "error", "message": "username, password and role required"}
+        uid = self.database.create_user(username, password, role, nom=data.get("nom"), prenom=data.get("prenom"))
+        if uid:
+            return {"status": "success", "data": {"user_id": uid}}
+        return {"status": "error", "message": "failed to create user"}
+
+    def handle_update_user(self, client: socket.socket, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Update a user (admin only)."""
+        if not self.is_authenticated(client):
+            return {"status": "error", "message": "authentication required"}
+        session = self.get_user_session(client)
         if session.get("role") != "administration":
-            return {"status": "error", "message": "Permissions insuffisantes"}
-        
+            return {"status": "error", "message": "permission denied"}
         user_id = data.get("user_id")
         if not user_id:
-            return {"status": "error", "message": "user_id requis"}
-        
-        success = self.database.update_user(user_id, data)
-        
-        if success:
-            return {
-                "status": "success",
-                "message": "Utilisateur modifié avec succès"
-            }
-        else:
-            return {
-                "status": "error",
-                "message": "Erreur lors de la modification de l'utilisateur"
-            }
-    
-    def handle_delete_user(self, client_socket: socket.socket, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Supprime un utilisateur (admin uniquement)."""
-        if not self.is_authenticated(client_socket):
-            return {"status": "error", "message": "Authentification requise"}
-        
-        session = self.get_user_session(client_socket)
+            return {"status": "error", "message": "user_id required"}
+        ok = self.database.update_user(user_id, data)
+        return {"status": "success"} if ok else {"status": "error", "message": "update failed"}
+
+    def handle_delete_user(self, client: socket.socket, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Delete a user (admin only)."""
+        if not self.is_authenticated(client):
+            return {"status": "error", "message": "authentication required"}
+        session = self.get_user_session(client)
         if session.get("role") != "administration":
-            return {"status": "error", "message": "Permissions insuffisantes"}
-        
+            return {"status": "error", "message": "permission denied"}
         user_id = data.get("user_id")
         if not user_id:
-            return {"status": "error", "message": "user_id requis"}
-        
-        success = self.database.delete_user(user_id)
-        
-        if success:
-            return {
-                "status": "success",
-                "message": "Utilisateur supprimé avec succès"
-            }
-        else:
-            return {
-                "status": "error",
-                "message": "Erreur lors de la suppression de l'utilisateur"
-            }
+            return {"status": "error", "message": "user_id required"}
+        ok = self.database.delete_user(user_id)
+        return {"status": "success"} if ok else {"status": "error", "message": "delete failed"}
 
 
-# Script pour lancer le serveur
+# Run server
 if __name__ == "__main__":
-    server = Server(host="localhost", port=8888)
+    s = Server(host="localhost", port=8888)
     try:
-        server.start()
+        s.start()
     except KeyboardInterrupt:
-        print("\nArrêt du serveur...")
-        server.stop()
+        print("Stopping server...")
+        s.stop()
