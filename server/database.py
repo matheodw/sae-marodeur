@@ -11,14 +11,23 @@ class Database:
     """Classe gérant toutes les interactions avec la base de données."""
     
     def __init__(self, db_path: str = "marodeur.db"):
-        """Initialise la base de données."""
+        """
+        Initialize the database and create tables if missing.
+
+        :param db_path: Path to the SQLite database file.
+        """
         self.db_path = db_path
-        # On initialise les tables au démarrage
         self._init_database()
         print(f"DB initialisée sur : {self.db_path}")
 
     def get_connection(self):
-        """Crée une nouvelle connexion ponctuelle (évite le verrouillage)."""
+        """
+        Create and return a new SQLite connection.
+
+        The returned connection uses WAL and sqlite3.Row for rows.
+
+        :return: sqlite3.Connection
+        """
         conn = sqlite3.connect(self.db_path, timeout=30)
         conn.row_factory = sqlite3.Row
         try:
@@ -29,7 +38,11 @@ class Database:
         return conn
     
     def _init_database(self):
-        """Initialise les tables de la base de données si elles n'existent pas."""
+        """
+        Create required tables and ensure a default admin user exists.
+
+        :return: None
+        """
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
@@ -110,6 +123,11 @@ class Database:
             conn.close()
     
     def _create_default_admin(self, conn):
+        """
+        Insert a default admin user if none exists.
+
+        :param conn: sqlite3.Connection to use for insertion.
+        """
         default_password = "admin"
         password_hash = self._hash_password(default_password)
         cursor = conn.cursor()
@@ -124,14 +142,30 @@ class Database:
             cursor.close()
     
     def _hash_password(self, password: str) -> str:
-        """Hash un mot de passe avec SHA-256."""
+        """
+        Hashes a plain-text password using SHA-256.
+        
+        :param password: The raw password string.
+        :return: A 64-character hexadecimal hash.
+        """
         return hashlib.sha256(password.encode()).hexdigest()
     
     def close(self):
-        """Inutile maintenant car on ferme à chaque appel, mais gardé pour compatibilité."""
+        """
+        No-op. Connections are created per-method; included for API compatibility.
+
+        :return: None
+        """
         pass
     
     def authenticate_user(self, username: str, password: str) -> Optional[Dict[str, Any]]:
+        """
+        Authenticate a user.
+
+        :param username: Username string.
+        :param password: Plain-text password.
+        :return: Dict with user fields on success, otherwise None.
+        """
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
@@ -150,6 +184,11 @@ class Database:
             conn.close()
       
     def get_all_users(self) -> List[Dict[str, Any]]:
+        """
+        Return a list of all users.
+
+        :return: List of user dicts.
+        """
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
@@ -165,6 +204,16 @@ class Database:
     
     def create_user(self, username: str, password: str, role: str,
                    nom: Optional[str] = None, prenom: Optional[str] = None) -> Optional[int]:
+        """
+        Create a new user.
+
+        :param username: Username.
+        :param password: Plain-text password.
+        :param role: User role.
+        :param nom: Optional last name.
+        :param prenom: Optional first name.
+        :return: New user id on success, None on failure.
+        """
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
@@ -186,6 +235,13 @@ class Database:
             conn.close()
     
     def update_user(self, user_id: int, data: Dict[str, Any]) -> bool:
+        """
+        Update a user's fields.
+
+        :param user_id: ID of the user to update.
+        :param data: Field values to update (supports 'password' to change password).
+        :return: True if a row was updated, False otherwise.
+        """
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
@@ -216,6 +272,12 @@ class Database:
             conn.close()
     
     def delete_user(self, user_id: int) -> bool:
+        """
+        Delete a user by id.
+
+        :param user_id: ID of the user to delete.
+        :return: True if deletion occurred, False otherwise.
+        """
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
@@ -231,6 +293,11 @@ class Database:
             conn.close()
     
     def get_presences(self) -> List[Dict[str, Any]]:
+        """
+        Return current presences active at now.
+
+        :return: List of presence dicts.
+        """
         conn = self.get_connection()
         cursor = conn.cursor()
         now = datetime.now()
@@ -250,6 +317,11 @@ class Database:
             conn.close()
     
     def get_presence_map(self) -> Dict[str, Any]:
+        """
+        Return presences grouped by room with a timestamp.
+
+        :return: Dict with 'presences', 'by_salle' and 'timestamp'.
+        """
         presences = self.get_presences()
         map_data = {}
         for p in presences:
@@ -260,6 +332,11 @@ class Database:
         return {"presences": presences, "by_salle": map_data, "timestamp": datetime.now().isoformat()}
     
     def get_salles_libres(self) -> List[Dict[str, Any]]:
+        """
+        Return rooms that are free right now.
+
+        :return: List of room dicts.
+        """
         conn = self.get_connection()
         cursor = conn.cursor()
         now = datetime.now()
@@ -277,6 +354,12 @@ class Database:
             conn.close()
 
     def search_etudiant(self, query: str) -> List[Dict[str, Any]]:
+        """
+        Search for students by name.
+
+        :param query: Search string to match against name fields.
+        :return: List of matching student dicts with current room if any.
+        """
         conn = self.get_connection()
         cursor = conn.cursor()
         now = datetime.now()
@@ -301,6 +384,15 @@ class Database:
 
     def update_presence_from_planning(self, personne_id: int, salle_id: int,
                                      date_debut: datetime, date_fin: Optional[datetime]):
+        """
+        Ensure a presence exists for a planning entry; insert if missing.
+
+        :param personne_id: Person ID.
+        :param salle_id: Room ID.
+        :param date_debut: Start datetime.
+        :param date_fin: Optional end datetime.
+        :return: None
+        """
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
@@ -319,7 +411,12 @@ class Database:
             conn.close()
             
     def clear_old_presences(self, before_date: datetime):
-        """Supprime les présences antérieures à une date donnée."""
+        """
+        Delete presences ending before the given date.
+
+        :param before_date: Datetime threshold; presences ending before this are removed.
+        :return: None
+        """
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
